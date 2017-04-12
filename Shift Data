@@ -1,0 +1,40 @@
+let
+    Source = qShiftData,
+    #"Subtracted from Column" = Table.TransformColumns(Source, {{"Index", each _ + 1, type number}}),
+    #"Removed Columns1" = Table.RemoveColumns(#"Subtracted from Column",{"Key"}),
+    #"Changed Type2" = Table.TransformColumnTypes(#"Removed Columns1",{{"Index", type text}}),
+    #"Added Custom1" = Table.AddColumn(#"Changed Type2", "Key", each [#"Employee No."] &"^"& [Index]),
+    #"Merged Queries" = Table.NestedJoin(#"Added Custom1",{"Key"},qShiftData,{"Key"},"NewColumn",JoinKind.LeftOuter),
+    #"Expanded NewColumn" = Table.ExpandTableColumn(#"Merged Queries", "NewColumn", {"Start Time", "Hours", "Shift Session Start", "Shift Session End"}, {"NewColumn.Start Time", "NewColumn.Hours", "NewColumn.Shift Session Start", "NewColumn.Shift Session End"}),
+    #"Filtered Rows" = Table.SelectRows(#"Expanded NewColumn", each ([Start Time] <> null and [Start Time] > #time(3, 0, 0))),
+    #"Filtered Rows test" = Table.SelectRows(#"Filtered Rows", each ([#"Employee No."] = "18024") and ([Attendances Begin Date] = #date(2017, 2, 1))),
+    #"Renamed Columns" = Table.RenameColumns(#"Filtered Rows test",{{"End Time", "End Time.0"}, {"Hours", "Hours.0"}, {"NewColumn.Start Time", "Start Time.1"}, {"NewColumn.Shift Session Start", "Shift Session Start.1"}, {"NewColumn.Shift Session End", "Shift Session End.1"}, {"NewColumn.Hours", "Hours.1"}}),
+    #"Removed Columns2" = Table.RemoveColumns(#"Renamed Columns",{"Attendance Type", "Index", "Key"}),
+    #"Duplicated Column" = Table.DuplicateColumn(#"Removed Columns2", "Shift Session Start.1", "Shift Session Start.1 - Copy"),
+    #"Extracted Date" = Table.TransformColumns(#"Duplicated Column",{{"Shift Session Start.1 - Copy", DateTime.Date}}),
+
+    #"Added Custom - Shift Session End.2" = Table.AddColumn(#"Extracted Date", "Shift Session End.2", each if [Shift Session Start.1] is null
+then [Shift Session End]
+else
+if Number.From ([Shift Session Start.1] - [Shift Session End]) * 24 < 3
+then [Shift Session End.1]
+else [Shift Session End]), 
+//if the record is the last of the month for the employee, the second set of shift session will be null as it won't have any matching. 
+//this will cause error in following formulas. 
+//so this formula says if the second set of session is null, use the first session 
+
+    #"Added Custom - session hours" = Table.AddColumn(#"Added Custom - Shift Session End.2", "Session Hours", each if [Shift Session Start.1] is null
+then [Hours.0]
+else
+if [#"Shift Session Start.1 - Copy"] = [Attendances Begin Date]
+then [Hours.0]
+else [Hours.1] + [Hours.0]),
+    #"Changed Type" = Table.TransformColumnTypes(#"Added Custom - session hours",{{"Shift Session End", type datetime}, {"Session Hours", type number}}),
+    #"Removed Columns" = Table.RemoveColumns(#"Changed Type",{"Start Time", "End Time.0", "Hours.0", "Shift Session End", "Start Time.1", "Hours.1", "Shift Session Start.1", "Shift Session End.1"}),
+    #"Grouped Rows" = Table.Group(#"Removed Columns", {"Employee No.", "Attendances Begin Date"}, {{"Shift Hours", each List.Sum([Session Hours]), type number}, {"Shift Start", each List.Min([Shift Session Start]), type datetime}, {"Shift End", each List.Max([Shift Session End.2]), type datetime}}),
+    #"Added Custom" = Table.AddColumn(#"Grouped Rows", "dqc hours", each Number.From ([Shift End] - [Shift Start]) * 24 - 0.5),
+    #"Changed Type1" = Table.TransformColumnTypes(#"Added Custom",{{"dqc hours", type number}}),
+    #"Added Custom2" = Table.AddColumn(#"Changed Type1", "dqc", each [dqc hours] - [Shift Hours]),
+    #"Filtered Rows2" = Table.SelectRows(#"Added Custom2", each ([dqc] = -12.5))
+in
+    #"Filtered Rows2"
